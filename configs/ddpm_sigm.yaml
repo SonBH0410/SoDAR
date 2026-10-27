@@ -1,0 +1,3 @@
+# Overrides configs/ddpm.yaml; uses the user's existing SIGM files directly.
+data:
+  root: /mnt/nvme0/home/sonbh/Dataset/OTU_2D

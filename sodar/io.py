@@ -2,6 +2,7 @@
 
 from collections import Counter
 from pathlib import Path
+import hashlib
 import json
 
 import numpy as np
@@ -11,6 +12,12 @@ from .config import resolve_manifest
 
 
 EXPECTED_COUNTS = {"train": 850, "val": 150, "test": 469}
+
+
+def train_records_fingerprint(manifest: dict) -> str:
+    """Stable digest of ordered train membership, not image pixel contents."""
+    canonical = json.dumps(manifest["train"], sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def load_manifest(conf: dict) -> dict:
@@ -131,6 +138,26 @@ def audit(conf: dict, *, include_synthetic: bool = True, check_all_arrays: bool 
     if include_synthetic:
         pairs = generated_pairs(conf)
         result["synthetic"] = {"count": len(pairs), "format": conf["data"]["synthetic_format"]}
+        synthetic_root = Path(conf["data"]["synthetic_root"])
+        provenance_file = synthetic_root / "provenance.json"
+        if provenance_file.is_file():
+            provenance = json.loads(provenance_file.read_text(encoding="utf-8"))
+            digest = train_records_fingerprint(manifest)
+            if provenance.get("status") != "complete" or provenance.get("source_split") != "train":
+                raise ValueError("Synthetic provenance must be complete and train-only")
+            if provenance.get("train_records_sha256") != digest:
+                raise ValueError("DDPM train manifest fingerprint mismatch: possible train/test leakage")
+            if provenance.get("num_samples") != len(pairs):
+                raise ValueError("Synthetic provenance sample count mismatch")
+            if provenance.get("synthetic_format") != conf["data"]["synthetic_format"]:
+                raise ValueError("Synthetic format disagrees with provenance; logits must not be double-softmaxed")
+            result["synthetic"]["train_manifest_verified"] = True
+            result["synthetic"]["generator_checkpoint_step"] = provenance.get("checkpoint_step")
+        else:
+            result["synthetic"]["train_manifest_verified"] = False
+            if conf["data"].get("require_synthetic_provenance", False):
+                raise ValueError(f"Missing synthetic provenance.json at {synthetic_root}. "
+                                 "Generate using scripts.sample_ddpm and the train-850 checkpoint")
         if check_all_arrays:
             for image_path, npy_path in pairs:
                 with Image.open(image_path) as im:

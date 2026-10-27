@@ -1,12 +1,32 @@
 # SoDAR — Soft-labeled Data Augmentation with Adaptive Reliability
 
 Research prototype for ovarian ultrasound segmentation on **OTU_2D** with a
-patient-disjoint **850 train / 150 validation / 469 test** manifest.
+user-provided patient-disjoint **850 train / 150 validation / 469 test** manifest.
 
 **Research status:** experimental, not a reproduction of a published Dice score.
-The supplied notebooks have no execution logs or generated samples. This repo
-reimplements the downstream study with explicit, audited inputs; it does **not**
-claim to reconstruct the original DDPM checkpoint or training results.
+The supplied notebooks have no reusable model checkpoints or generated samples.
+Since **v0.2**, this repo includes *train-from-scratch joint DDPM + DDIM sampling*
+alongside all student ablations. It does **not** claim to reconstruct the
+original trained DDPM weights or published segmentation results.
+
+## Complete flow — now executable
+
+1. The joint image/mask DDPM is trained from scratch **only on manifest train-850**.
+2. Its checkpoint and exact train-membership fingerprint are saved.
+3. DDIM exports paired `images/*.jpg` and **raw** `logits_npy/*.npy`.
+4. The generator is frozen; B0–B2 use real data only and S1–S5 share the same
+   synthetic samples. `configs/sigm.yaml` requires matching DDPM provenance.
+5. Student training, validation, and final separate test evaluation remain as
+   before. **No implicit Flip+DDPM group** is introduced.
+
+Run the complete **phantom E2E** in a fresh directory:
+
+```bash
+python -m scripts.smoke_ddpm --root /tmp/sodar-ddpm-demo
+```
+
+See [RUN.md](RUN.md) for real SIGM commands and [docs/DDPM.md](docs/DDPM.md)
+for exact generator loss, model differences from the notebook and limitations.
 
 ## Research question
 
@@ -68,7 +88,8 @@ The manifest included in `manifests/` is copied unchanged from the provided
 Even in split mode, the JSON manifest **determines membership**; `glob()` does
 not silently redefine splits. The path resolver looks up images by manifest ID.
 
-**DDPM output** (the directory produced by `us-dakter (1).ipynb`):
+**DDPM output** (produced by the new `scripts.sample_ddpm`, equivalent to the
+output contract in `us-dakter (1).ipynb`):
 
 ```text
 /path/to/generated_dataset_full/
@@ -88,6 +109,10 @@ The generator must have been trained **only on the 850 training cases**. A
 patient-disjoint JSON does not itself prove that an older DDPM checkpoint was
 free from validation/test leakage. Record the generator checkpoint identifier
 and its source train-ID manifest; retrain if it overlapped held-out patients.
+The new sampling script writes `provenance.json` with a fingerprint of the
+ordered train manifest; SIGM student experiments reject missing/mismatched
+provenance. This fingerprint confirms manifest membership, **not** image hashes
+or patient IDs that are absent from the supplied JSON.
 
 ## Installation
 
@@ -96,9 +121,13 @@ Python 3.10+ recommended. PyTorch is intentionally a user-side dependency
 
 ```bash
 python -m pip install -e .
-python -m pip install -e '.[segformer]'           # only for SegFormer-B2
+python -m scripts.check_env                  # inspect existing PyTorch/CUDA
+python -m pip install -e '.[segformer]'       # only for SegFormer-B2
 ```
 
+The base install intentionally does not auto-install or replace PyTorch GPU
+wheels. Install a matching `torch` / `torchvision` pair only if absent, using
+the [official PyTorch installation selector](https://pytorch.org/get-started/locally/).
 `torchvision` is required for the VGG16-based SovaSeg-Net; pretrained weights
 may need Internet access or a populated model cache. SegFormer-B2 uses the
 pretrained `nvidia/mit-b2` weights and likewise needs access/cache.
@@ -109,20 +138,31 @@ segmentation head is initialized for OTU_2D.
 ## Quick start
 
 ```bash
-# 1. Audit before training (no torch required)
-python -m scripts.audit_data --data-root /path/to/OTU_2D \
-  --generated-root /path/to/generated_dataset_full
+# 1. Audit real images without synthetic data (no torch required)
+python -m scripts.audit_data --config configs/sigm.yaml --real-only
 
-# 2. Train B0 baseline
+# 2. Train DDPM from scratch (pilot: 1000 steps)
+python -m scripts.train_ddpm --config configs/ddpm_sigm.yaml \
+  --steps 1000 --save-root runs/ddpm_pilot
+
+# 3. Sample a small pilot from the checkpoint (use a FRESH output folder)
+python -m scripts.sample_ddpm --checkpoint runs/ddpm_pilot/latest.pt \
+  --output runs/ddpm_pilot_samples --num-samples 16 --batch-size 4
+
+# 4. Audit synthetic labels and provenance
+python -m scripts.audit_generated --generated-root runs/ddpm_pilot_samples \
+  --expected-count 16
+
+# 5. Train B0 baseline
 python -m scripts.train --experiment B0 --model unet \
-  --data-root /path/to/OTU_2D --seed 42
+  --config configs/sigm.yaml --seed 42
 
-# 3. Train SoDAR global meta-lambda on the same split
+# 6. Test end-to-end connectivity on the pilot synthetic samples
 python -m scripts.train --experiment S4 --model unet \
-  --data-root /path/to/OTU_2D \
-  --generated-root /path/to/generated_dataset_full --seed 42
+  --config configs/sigm.yaml \
+  --generated-root runs/ddpm_pilot_samples --seed 42 --epochs 1
 
-# 4. Test one finalized checkpoint (do not test during model search)
+# 7. Test one finalized checkpoint only after research tuning is frozen
 python -m scripts.evaluate --checkpoint runs/S4_unet_seed42/best.pt
 ```
 
@@ -130,10 +170,21 @@ See **[RUN.md](RUN.md)** for the complete matrix, Kaggle paths, three seeds,
 phantom test and troubleshooting. See **[docs/METHOD.md](docs/METHOD.md)** for
 losses and the meaning/limitations of meta-learning.
 
+For the SIGM workstation, `configs/sigm.yaml` already sets
+`/mnt/nvme0/home/sonbh/Dataset/OTU_2D` as the shared parent of `images` and
+`annotations`. Start with:
+
+```bash
+python -m scripts.audit_data --config configs/sigm.yaml --real-only
+```
+
 ## Auditability and safeguards
 
 - All runs store `config.json`, `history.json`, and best validation checkpoint.
 - Train and validation use separate manifest lists; test runs in its own CLI.
+- The generator uses manifest `train` only. `provenance.json` includes the exact
+  train-list digest and checkpoint hash; mixing a synthetic folder from another
+  train list raises a hard error in SIGM configuration.
 - Report macro *per-image* Dice/IoU alongside global micro-Dice; retain eight
   image-level categories for stratified reporting.
 - Three seeds are predeclared: `42 123 2026` (override via `--seeds`).

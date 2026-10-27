@@ -6,6 +6,7 @@ data:
   synthetic_root: /path/to/generated_dataset_full
   synthetic_logits_dir: logits_npy
   synthetic_format: logits       # logits | probabilities
+  require_synthetic_provenance: false  # set true for publication-grade SoDAR runs
   size: 256
   normalize: imagenet
   enforce_counts: true

@@ -6,4 +6,8 @@ runs/
 *.pt
 *.pth
 generated_dataset_full/
+ddpm_generated/
+ddpm_pilot_generated/
+*.npy
+*.incomplete
 data/

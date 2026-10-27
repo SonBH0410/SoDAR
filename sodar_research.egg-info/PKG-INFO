@@ -1,0 +1,193 @@
+Metadata-Version: 2.4
+Name: sodar-research
+Version: 0.1.1
+Summary: Adaptive soft-labeled DDPM augmentation for ovarian ultrasound segmentation
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: numpy<3,>=1.26
+Requires-Dist: Pillow>=10
+Requires-Dist: PyYAML>=6
+Requires-Dist: tqdm>=4.66
+Provides-Extra: training
+Requires-Dist: torch>=2.2; extra == "training"
+Requires-Dist: torchvision>=0.17; extra == "training"
+Provides-Extra: segformer
+Requires-Dist: transformers<4.47,>=4.44; extra == "segformer"
+Provides-Extra: test
+Requires-Dist: pytest>=8; extra == "test"
+
+# SoDAR — Soft-labeled Data Augmentation with Adaptive Reliability
+
+Research prototype for ovarian ultrasound segmentation on **OTU_2D** with a
+patient-disjoint **850 train / 150 validation / 469 test** manifest.
+
+**Research status:** experimental, not a reproduction of a published Dice score.
+The supplied notebooks have no execution logs or generated samples. This repo
+reimplements the downstream study with explicit, audited inputs; it does **not**
+claim to reconstruct the original DDPM checkpoint or training results.
+
+## Research question
+
+Can *learned weighting of diffusion-generated soft-label supervision* prevent
+negative transfer and outperform a strong real-only baseline?
+
+The original SoDA experiments were reported by the researcher to perform worse
+than no augmentation and no-augmentation + horizontal flip after the patient
+overlap was fixed. **SoDAR must beat these baselines; zeroing the synthetic
+weight and merely matching real-only performance does not count as success.**
+
+## Main protocol
+
+| Group | Real image augmentation | Synthetic data | Supervision / weight |
+|---|---|---|---|
+| B0 | None | No | Hard BCE + Dice |
+| B1 | Horizontal flip | No | Hard BCE + Dice |
+| B2 | Flip + mild rotation + photometric | No | Hard BCE + Dice |
+| S1 | None (B0 setting) | Same DDPM images | Hard masks / fixed lambda |
+| S2 | None (B0 setting) | Same DDPM images | Soft KL / fixed lambda |
+| S3 | None (B0 setting) | Same DDPM images | Soft KL / naive trainable lambda (negative control) |
+| S4 | None (B0 setting) | Same DDPM images | Soft KL / meta-learned lambda |
+| S5 | None (B0 setting) | Same DDPM images | Soft KL / meta lambda + entropy-based sample weights |
+
+**Important:** S1–S5 are **not combined with Flip**. B2 is an independent
+strong conventional augmentation comparison. If desired, conventional +
+synthetic synergy can be a *separate*, explicitly named experiment, not an
+implicit part of S1–S5.
+
+Compare S1 and S2 on *exactly the same generated image/logit pairs* and with
+the same student epochs, minibatch sizes, optimizer, and number of updates.
+
+## Input contract
+
+The manifest included in `manifests/` is copied unchanged from the provided
+`OTU_2D_850-150-469.json`. Both layouts are supported:
+
+**Original manifest layout** (`data.layout: manifest`):
+
+```text
+/path/to/OTU_2D/
+  images/393.JPG
+  annotations/393.PNG
+  ...
+```
+
+**Materialized split layout** (`data.layout: split`):
+
+```text
+/path/to/dataset_split/
+  train/images/393.JPG
+  train/masks/393.PNG
+  validation/images/...
+  validation/masks/...
+  test/images/...
+  test/masks/...
+```
+
+Even in split mode, the JSON manifest **determines membership**; `glob()` does
+not silently redefine splits. The path resolver looks up images by manifest ID.
+
+**DDPM output** (the directory produced by `us-dakter (1).ipynb`):
+
+```text
+/path/to/generated_dataset_full/
+  images/000000.jpg
+  images/000001.jpg
+  logits_npy/000000.npy    # float, shape (2,H,W) or (H,W,2)
+  logits_npy/000001.npy
+  hard_masks/000000.jpg   # optional; NOT needed for S1–S5
+```
+
+The loader can also read `soft_labels_npy/` and names like
+`soft_label_000000.npy`. The code **never** silently treats logits as
+probabilities: `data.synthetic_format: logits|probabilities` is explicit.
+Every `.npy` must contain exactly two background/foreground channels.
+
+The generator must have been trained **only on the 850 training cases**. A
+patient-disjoint JSON does not itself prove that an older DDPM checkpoint was
+free from validation/test leakage. Record the generator checkpoint identifier
+and its source train-ID manifest; retrain if it overlapped held-out patients.
+
+## Installation
+
+Python 3.10+ recommended. PyTorch is intentionally a user-side dependency
+(GPU/CUDA wheels vary by workstation/Kaggle image).
+
+```bash
+python -m pip install -e .
+python -m scripts.check_env                  # inspect existing PyTorch/CUDA
+python -m pip install -e '.[segformer]'       # only for SegFormer-B2
+```
+
+The base install intentionally does not auto-install or replace PyTorch GPU
+wheels. Install a matching `torch` / `torchvision` pair only if absent, using
+the [official PyTorch installation selector](https://pytorch.org/get-started/locally/).
+`torchvision` is required for the VGG16-based SovaSeg-Net; pretrained weights
+may need Internet access or a populated model cache. SegFormer-B2 uses the
+pretrained `nvidia/mit-b2` weights and likewise needs access/cache.
+For Kaggle, set `HF_HOME=/kaggle/working/hf-cache` if the default model cache
+is not writable. The MiT-B2 encoder is ImageNet-pretrained; the binary
+segmentation head is initialized for OTU_2D.
+
+## Quick start
+
+```bash
+# 1. Audit before training (no torch required)
+python -m scripts.audit_data --data-root /path/to/OTU_2D \
+  --generated-root /path/to/generated_dataset_full
+
+# 2. Train B0 baseline
+python -m scripts.train --experiment B0 --model unet \
+  --data-root /path/to/OTU_2D --seed 42
+
+# 3. Train SoDAR global meta-lambda on the same split
+python -m scripts.train --experiment S4 --model unet \
+  --data-root /path/to/OTU_2D \
+  --generated-root /path/to/generated_dataset_full --seed 42
+
+# 4. Test one finalized checkpoint (do not test during model search)
+python -m scripts.evaluate --checkpoint runs/S4_unet_seed42/best.pt
+```
+
+See **[RUN.md](RUN.md)** for the complete matrix, Kaggle paths, three seeds,
+phantom test and troubleshooting. See **[docs/METHOD.md](docs/METHOD.md)** for
+losses and the meaning/limitations of meta-learning.
+
+For the SIGM workstation, `configs/sigm.yaml` already sets
+`/mnt/nvme0/home/sonbh/Dataset/OTU_2D` as the shared parent of `images` and
+`annotations`. Start with:
+
+```bash
+python -m scripts.audit_data --config configs/sigm.yaml --real-only
+```
+
+## Auditability and safeguards
+
+- All runs store `config.json`, `history.json`, and best validation checkpoint.
+- Train and validation use separate manifest lists; test runs in its own CLI.
+- Report macro *per-image* Dice/IoU alongside global micro-Dice; retain eight
+  image-level categories for stratified reporting.
+- Three seeds are predeclared: `42 123 2026` (override via `--seeds`).
+- Data preprocessing is identical in every comparison; *only* the specified
+  augmentation or synthetic supervision differs.
+- The S3 naive lambda baseline should mathematically collapse toward zero;
+  it is intentionally included as a negative control.
+- The first-order meta step uses a **separate real minibatch from train**, not
+  the 150-image validation set. It is a pragmatic gradient-based approximation,
+  **not** a fully independent validation-based bilevel estimator.
+- This is a **research prototype**. Validate original images, annotation
+  semantics, duplicates, patient IDs and the DDPM's source split separately.
+
+## References and attribution
+
+- Zhao et al., *MMOTU*, https://arxiv.org/abs/2207.06799
+- Luong et al., *SovaSeg-Net*, ICIP 2024, https://github.com/SonBH0410/SovaSeg-Net
+- Moon et al., *DAKTer*, IEEE TCSVT 2026, DOI: 10.1109/TCSVT.2026.3701691
+- Ren et al., *Learning to Reweight Examples*, ICML 2018,
+  https://proceedings.mlr.press/v80/ren18a.html
+- Liu et al., *Auto-Lambda*, TMLR 2022, https://arxiv.org/abs/2202.03091
+- Hinton et al., *Distilling the Knowledge in a Neural Network*,
+  https://arxiv.org/abs/1503.02531
+
+SoDAR adapts known weighting ideas to the particular **negative transfer from
+synthetic soft-label supervision**. A learnable scalar alone is not a novelty
+claim. The study must isolate, measure and substantiate its actual benefit.

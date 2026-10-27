@@ -3,18 +3,174 @@
 Run commands from the repository root. Do **not** change the test partition in
 the included JSON, and do not run test evaluation while selecting hyperparameters.
 
-## 0. Environment
+## NEW in v0.2: train the missing DDPM generator first
+
+**No old weights or generated samples are required.** The project now trains
+and samples its own joint DDPM from scratch, using only the manifest train-850.
+The full phantom test checks actual DDPM training, checkpoint, sampling,
+soft logits, S4 student training and test-evaluation:
 
 ```bash
-python --version
-python -m pip install -e .
-python -m pip install -e '.[segformer]'   # required by segformer_b2
+python -m scripts.smoke_ddpm --root /tmp/sodar-ddpm-demo
 ```
 
-For CUDA, install matching PyTorch/torchvision builds from official PyTorch
-instructions before installing this package.
-If Hugging Face's default cache is not writable, use
-`export HF_HOME=/kaggle/working/hf-cache` before loading MiT-B2 pretrained.
+Choose a fresh `--root` for a repeat; the smoke refuses to overwrite outputs.
+For real OTU_2D on SIGM:
+
+```bash
+# A. Confirm all 1469 original pairs exist
+python -m scripts.audit_data --config configs/sigm.yaml --real-only
+
+# B. Engineering pilot: NOT a converged generator
+python -m scripts.train_ddpm --config configs/ddpm_sigm.yaml \
+  --steps 1000 --batch-size 2 --grad-accum 4 \
+  --save-root runs/ddpm_pilot
+
+# C. Test export of a SMALL pilot sample; this is not paper data
+python -m scripts.sample_ddpm --checkpoint runs/ddpm_pilot/latest.pt \
+  --output runs/ddpm_pilot_generated --num-samples 16 --batch-size 4
+python -m scripts.audit_generated \
+  --generated-root runs/ddpm_pilot_generated --expected-count 16
+
+# D. Controlled study: train generator from scratch with predeclared budget.
+# IMPORTANT: Do not mix pilot & final checkpoints in the same directory.
+python -m scripts.train_ddpm --config configs/ddpm_sigm.yaml \
+  --steps 100000 --batch-size 2 --grad-accum 4 \
+  --save-root runs/ddpm_full
+
+# E. Export a fixed final synthetic corpus from EMA checkpoint
+python -m scripts.sample_ddpm --checkpoint runs/ddpm_full/latest.pt \
+  --output /mnt/nvme0/home/sonbh/Dataset/SoDAR-DDPM \
+  --num-samples 1177 --batch-size 4
+python -m scripts.audit_generated \
+  --generated-root /mnt/nvme0/home/sonbh/Dataset/SoDAR-DDPM \
+  --expected-count 1177
+
+# F. Compare fixed synthetic teacher vs learned lambda, WITHOUT Flip
+python -m scripts.train --experiment S2 --config configs/sigm.yaml \
+  --model unet --seed 42 \
+  --generated-root /mnt/nvme0/home/sonbh/Dataset/SoDAR-DDPM
+python -m scripts.train --experiment S4 --config configs/sigm.yaml \
+  --model unet --seed 42 \
+  --generated-root /mnt/nvme0/home/sonbh/Dataset/SoDAR-DDPM
+```
+
+**Resume** an interrupted DDPM run without changing architecture, dataset,
+optimizer, batch size or accumulation. Only raise `--steps` beyond the saved
+step if extending training:
+
+```bash
+python -m scripts.train_ddpm --config configs/ddpm_sigm.yaml \
+  --steps 120000 --batch-size 2 --grad-accum 4 \
+  --save-root runs/ddpm_full --resume runs/ddpm_full/latest.pt
+```
+
+Sampling supports `--resume-output` only for an interrupted output directory
+whose checkpoint SHA, seed, sample count and batch size match `provenance.json`.
+It never silently overwrites existing pairs. See [docs/DDPM.md](docs/DDPM.md)
+for the loss, clean split, EMA, and reproducibility limitations. Never run the
+old Kaggle notebook's `pip uninstall torch` cells in `(SonBH-env)`.
+
+If GPU memory is insufficient, start a **new run** with `--batch-size 1
+--grad-accum 8`; do not alter batch-size parameters when resuming an existing
+checkpoint. At real 256×256 resolution, model runtime and generated quality
+must be measured rather than inferred from the fast 32×32 phantom.
+
+## 0. Environment
+
+On the SIGM server, use the existing activated `(SonBH-env)` environment.
+Install only the base dependencies first; this does **not** replace an existing
+PyTorch/CUDA installation:
+
+```bash
+cd /mnt/nvme0/home/sonbh/Code/SoDAR
+python --version
+python -m pip install -e .
+python -m scripts.check_env
+```
+
+`torch` and `torchvision` are deliberately optional in the package's default
+install. If they are **already installed**, do not overwrite them. If missing,
+install a matching pair for the machine's NVIDIA driver using the official
+[PyTorch installer](https://pytorch.org/get-started/locally/). Never assume
+the server needs CPU-only wheels. After installation:
+
+```bash
+python -m scripts.check_env --require-torch
+python -m pip install -e '.[segformer]'  # for SegFormer-B2 only
+python -m scripts.check_env --require-torch --require-segformer
+python -m pip check
+```
+
+An example **only if** the selected PyTorch/CUDA combination is 2.5.1/cu121:
+
+```bash
+python -m pip install torch==2.5.1 torchvision==0.20.1 \
+  --index-url https://download.pytorch.org/whl/cu121
+```
+
+Confirm `nvidia-smi`, `python -m scripts.check_env --require-torch` and the
+official compatibility selector **before** choosing a wheel index. Python
+3.10/3.11 are convenient environments for these tested library versions.
+If Hugging Face's model cache is not writable, set `HF_HOME` to a writable
+directory such as `/mnt/nvme0/home/sonbh/.cache/huggingface` before loading
+pretrained MiT-B2.
+
+### Existing repo vs new ZIP
+
+Do not unpack the new ZIP over a modified old working tree. For an isolated
+copy, from the directory containing the downloaded archive:
+
+```bash
+mkdir -p /mnt/nvme0/home/sonbh/Code/SoDAR-v0.2
+unzip -q SoDAR-v0.2-complete.zip -d /mnt/nvme0/home/sonbh/Code/SoDAR-v0.2
+cd /mnt/nvme0/home/sonbh/Code/SoDAR-v0.2/SoDAR
+```
+
+### SIGM-specific dataset paths (supplied by SonBH)
+
+```text
+/mnt/nvme0/home/sonbh/Dataset/OTU_2D/
+  images/393.JPG
+  annotations/393.PNG
+```
+
+Their **common parent** is the `data.root`. The included
+`configs/sigm.yaml` sets this for you, without copying or changing the 850/
+150/469 manifest. No need to pass `/images` or `/annotations` separately.
+First check all 1,469 image/mask pairs (DDPM not needed):
+
+```bash
+python -m scripts.audit_data --config configs/sigm.yaml --real-only
+```
+
+Then run a short real-data I/O and training pilot:
+
+```bash
+python -m scripts.train --config configs/sigm.yaml \
+  --experiment B0 --model unet --epochs 1 --seed 42
+```
+
+For S1–S5, the **generated DDPM folder is an additional input**, not the
+original `OTU_2D/annotations` directory. Set it after locating the real
+folder containing `images/` and `logits_npy/`:
+
+```bash
+python -m scripts.audit_data --config configs/sigm.yaml \
+  --generated-root /ACTUAL/PATH/TO/generated_dataset_full
+
+python -m scripts.train --config configs/sigm.yaml \
+  --experiment S4 --model unet --epochs 1 \
+  --generated-root /ACTUAL/PATH/TO/generated_dataset_full
+```
+
+Replace `/ACTUAL/PATH/TO/...` with the real generated-data directory. A
+dummy path is intentionally left in `configs/sigm.yaml`; SoDAR does not
+generate DDPM samples during the student-training step. Instead, run
+`scripts.train_ddpm` and `scripts.sample_ddpm` **before** the student experiment.
+`configs/sigm.yaml` requires `provenance.json` from a generator trained on
+this exact train-850 list, preventing accidental use of the old overlapping
+split or a mismatched generator checkpoint.
 
 ## 1. Local original data and DDPM data
 
@@ -97,6 +253,7 @@ python -m scripts.audit_data --config configs/phantom.yaml \
   --data-root /tmp/sodar-phantom/real \
   --generated-root /tmp/sodar-phantom/generated --allow-phantom
 python -m scripts.smoke_test --phantom-root /tmp/sodar-phantom
+python -m scripts.smoke_test --phantom-root /tmp/sodar-phantom --with-torch
 ```
 
 The smoke test exercises JSON split membership, image/mask loading, DDPM
@@ -104,6 +261,20 @@ The smoke test exercises JSON split membership, image/mask loading, DDPM
 NumPy first-order meta-weight reference check. If PyTorch is available,
 `--with-torch` additionally runs a **one-epoch actual U-Net S4 training** on
 the phantom; this is not a clinical validation or a speed benchmark.
+
+The old v0.1.0 smoke test used a strict finite-difference assertion that could
+fail on a different NumPy environment **before PyTorch starts**. In v0.1.1,
+the two-parameter reference uses explicit float64, a more stable difference
+step and a diagnostic error reporting the numerical and analytical gradients.
+If you still see `Phantom hypergradient mismatch`, run a fresh fixture:
+
+```bash
+python -m scripts.make_phantom --output /tmp/sodar-phantom-clean
+python -m scripts.smoke_test --phantom-root /tmp/sodar-phantom-clean
+```
+
+The full `--with-torch` smoke still uses the default `/tmp/sodar-phantom`
+path. The phantom has **no medical data** and is only an execution sanity test.
 
 ## 7. Paths, formats, reproducibility
 

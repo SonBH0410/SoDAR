@@ -42,7 +42,14 @@ class ContractTests(unittest.TestCase):
         self.assertLess(np.abs(p4[1]-.5).mean(), np.abs(p1[1]-.5).mean())
 
     def test_first_order_meta_gradient(self):
-        self.assertEqual(run_numpy_flow(self.root)["result"], "PASS")
+        report = run_numpy_flow(self.root)
+        self.assertEqual(report["result"], "PASS")
+        self.assertLess(report["meta_gradient_absolute_error"], 1e-6)
+
+    def test_sigm_config_uses_common_dataset_parent(self):
+        cfg = configure("B0", config_path=str(Path(__file__).resolve().parents[1] / "configs" / "sigm.yaml"))
+        self.assertEqual(cfg["data"]["root"], "/mnt/nvme0/home/sonbh/Dataset/OTU_2D")
+        self.assertEqual(cfg["data"]["layout"], "manifest")
 
     def test_real_research_manifest_counts(self):
         conf = configure("B0")

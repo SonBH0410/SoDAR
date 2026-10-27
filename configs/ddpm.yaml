@@ -1,0 +1,38 @@
+# DAKTer-style joint generator; separate from student S1-S5 augmentations.
+# These are research starting values. Run a short quality/budget pilot first.
+data:
+  root: /path/to/OTU_2D
+  manifest: manifests/OTU_2D_850-150-469.json
+  enforce_counts: true
+  image_size: 256
+  flip_probability: 0.0   # generator-only; disabled for the primary study
+model:
+  dim: 64
+  dim_mults: [1, 2, 4, 8]
+  heads: 4
+  dim_head: 32
+  dropout: 0.0
+diffusion:
+  timesteps: 1000
+  sampling_timesteps: 200
+  ddim_eta: 0.0
+  snr_balance_b: 0.684
+  objective: pred_x0
+  beta_schedule: cosine
+train:
+  steps: 100000
+  batch_size: 2
+  grad_accum: 4
+  num_workers: 4
+  lr: 0.00002
+  weight_decay: 0.0
+  adam_betas: [0.9, 0.99]
+  grad_clip: 1.0
+  ema_decay: 0.995
+  ema_update_every: 20
+  save_every: 2000
+  log_every: 50
+  amp: true
+  device: auto
+  seed: 42
+  save_root: runs/ddpm

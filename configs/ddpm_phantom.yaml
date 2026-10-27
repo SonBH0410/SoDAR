@@ -1,0 +1,25 @@
+# Tiny smoke-only generator; NOT suitable for scientific experiments.
+data:
+  root: /tmp/sodar-ddpm-phantom/real
+  manifest: /tmp/sodar-ddpm-phantom/manifest.json
+  enforce_counts: false
+  image_size: 32
+model:
+  dim: 16
+  dim_mults: [1, 2]
+  heads: 2
+  dim_head: 8
+diffusion:
+  timesteps: 16
+  sampling_timesteps: 4
+train:
+  steps: 2
+  batch_size: 2
+  grad_accum: 1
+  num_workers: 0
+  lr: 0.001
+  save_every: 1
+  log_every: 1
+  ema_update_every: 1
+  amp: false
+  save_root: /tmp/sodar-ddpm-phantom/ddpm_runs

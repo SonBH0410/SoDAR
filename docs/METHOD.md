@@ -1,11 +1,12 @@
 # SoDAR method (implementation specification)
 
-## Frozen generator and paired logits
+## Upstream trainable generator; frozen downstream teacher
 
-The pretrained DAKTer-style joint diffusion generator outputs generated
-ultrasound image \(x_s\) and two-channel mask logits \(z_g\). This repository
-does **not** train DDPM. It reads immutable outputs from the generator. Only
-850 training patients/images may have contributed to generator training.
+The DAKTer-style joint diffusion generator is trained **from scratch using
+manifest train-850**, then frozen. It outputs generated ultrasound image \(x_s\)
+and two-channel mask logits \(z_g\). The student reads immutable generated
+pairs. See `docs/DDPM.md` for the explicit image-MSE + mask-CE generator loss.
+No validation or test image pixels contribute to generator training.
 
 Binary hard ground truth \(y_r\) accompanies real images \(x_r\). The eight
 values in the manifest's `label` column are image-level categories for

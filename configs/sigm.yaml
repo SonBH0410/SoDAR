@@ -1,0 +1,9 @@
+# SIGM / SonBH OTU_2D workstation path override.
+# The manifest always chooses the exact 850 / 150 / 469 images.
+data:
+  layout: manifest
+  root: /mnt/nvme0/home/sonbh/Dataset/OTU_2D
+  # This must be set to the ACTUAL output directory of your diffusion model
+  # before S1–S5. B0/B1/B2 and --real-only audit do not use it.
+  synthetic_root: /path/to/generated_dataset_full
+  require_synthetic_provenance: true
