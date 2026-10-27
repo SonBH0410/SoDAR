@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sodar-research"
+version = "0.1.0"
+description = "Adaptive soft-labeled DDPM augmentation for ovarian ultrasound segmentation"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.26,<3",
+  "Pillow>=10",
+  "PyYAML>=6",
+  "tqdm>=4.66",
+  "torch>=2.2",
+  "torchvision>=0.17",
+]
+
+[project.optional-dependencies]
+segformer = ["transformers>=4.44,<4.47"]
+test = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+include = ["sodar*", "scripts*"]

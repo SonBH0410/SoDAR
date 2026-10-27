@@ -1,0 +1,38 @@
+data:
+  layout: manifest
+  root: /tmp/sodar-phantom/real
+  manifest: /tmp/sodar-phantom/manifest.json
+  synthetic_root: /tmp/sodar-phantom/generated
+  synthetic_logits_dir: logits_npy
+  synthetic_format: logits
+  size: 64
+  normalize: imagenet
+  enforce_counts: false
+model:
+  name: unet
+  pretrained: false
+  base_channels: 8
+train:
+  epochs: 1
+  batch_size_real: 4
+  batch_size_syn: 4
+  num_workers: 0
+  lr: 0.0003
+  weight_decay: 0.0
+  dice_weight: 0.5
+  seed: 42
+  device: cpu
+  save_root: /tmp/sodar-phantom/runs
+  grad_clip: 1.0
+synthetic:
+  temperature: 2.0
+  weight_init: 0.1
+  weight_max: 0.5
+  weighting: meta
+  mode: soft
+  soft_loss: kd
+  meta_every: 1
+  meta_lr: 0.01
+  entropy_weighting: false
+  entropy_gamma: 1.0
+  entropy_floor: 0.2

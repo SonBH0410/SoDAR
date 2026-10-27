@@ -1,0 +1,24 @@
+B0:
+  augment: none
+  synthetic: {mode: none}
+B1:
+  augment: flip
+  synthetic: {mode: none}
+B2:
+  augment: combined
+  synthetic: {mode: none}
+S1:
+  augment: none
+  synthetic: {mode: hard, weighting: fixed}
+S2:
+  augment: none
+  synthetic: {mode: soft, weighting: fixed, soft_loss: kd}
+S3:
+  augment: none
+  synthetic: {mode: soft, weighting: naive, soft_loss: kd}
+S4:
+  augment: none
+  synthetic: {mode: soft, weighting: meta, soft_loss: kd}
+S5:
+  augment: none
+  synthetic: {mode: soft, weighting: meta, soft_loss: kd, entropy_weighting: true}

@@ -1,0 +1,40 @@
+data:
+  layout: manifest                 # manifest | split
+  root: /path/to/OTU_2D
+  manifest: manifests/OTU_2D_850-150-469.json
+  split_val_name: validation       # for split layout
+  synthetic_root: /path/to/generated_dataset_full
+  synthetic_logits_dir: logits_npy
+  synthetic_format: logits       # logits | probabilities
+  size: 256
+  normalize: imagenet
+  enforce_counts: true
+model:
+  name: unet                      # unet | sovasegnet | segformer_b2
+  pretrained: true
+  base_channels: 32              # U-Net; use 8 for phantom quick training
+  segformer_pretrained_id: nvidia/mit-b2
+train:
+  epochs: 50
+  batch_size_real: 10
+  batch_size_syn: 10
+  num_workers: 2
+  lr: 0.0001
+  weight_decay: 0.0001
+  dice_weight: 0.5
+  seed: 42
+  device: auto
+  save_root: runs
+  grad_clip: 1.0
+synthetic:
+  temperature: 2.0
+  weight_init: 0.1
+  weight_max: 0.5
+  weighting: fixed               # fixed | naive | meta
+  mode: none                     # none | hard | soft
+  soft_loss: kd                  # kd | softbce | softbce_dice
+  meta_every: 5
+  meta_lr: 0.005
+  entropy_weighting: false
+  entropy_gamma: 1.0
+  entropy_floor: 0.2
